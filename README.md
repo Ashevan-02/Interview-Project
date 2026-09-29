@@ -1,90 +1,260 @@
 # NCSA SQL Injection Demo
 
-A beginner-friendly Java console application that demonstrates how SQL injection
-attacks work and how to prevent them using JDBC PreparedStatement.
-
-Built as a practical assignment for the National Cyber Security Authority (NCSA)
-internship recruitment process.
+A Java console application that demonstrates how an SQL injection attack happens
+and how it can be prevented using PreparedStatement.
 
 ---
 
-## Project Structure
+## What this project does
+
+This project simulates a login system connected to a real PostgreSQL database.
+It runs the same test cases against two versions of the login:
+
+- **VulnerableLogin** — built with unsafe string concatenation. Gets bypassed by attacks.
+- **SecureLogin** — built with PreparedStatement. Blocks every attack.
+
+The output shows exactly what SQL the database receives in each case so you can
+see the attack happening in real time.
+
+---
+
+## What you need before you start
+
+Make sure you have these installed on your machine:
+
+- Java 17
+- Apache Maven 3.x
+- PostgreSQL (running locally)
+- VS Code or any terminal
+
+To check if Java and Maven are installed, open a terminal and run:
+
+```
+java -version
+mvn -version
+```
+
+---
+
+## Step 1 — Create the database
+
+Open SQL Shell (psql) from your Start menu.
+
+Press Enter to accept the defaults for Server, Database, Port, and Username.
+Type your PostgreSQL password when prompted.
+
+Then run this command:
+
+```sql
+CREATE DATABASE ncsa_demo;
+```
+
+You should see:
+```
+CREATE DATABASE
+```
+
+Type `\q` to exit.
+
+---
+
+## Step 2 — Configure your database credentials
+
+Open this file:
+
+```
+src/main/resources/db.properties
+```
+
+It looks like this:
+
+```
+db.url=jdbc:postgresql://localhost:5432/ncsa_demo
+db.user=postgres
+db.password=your_password_here
+```
+
+Replace `your_password_here` with your actual PostgreSQL password and save the file.
+
+This file is listed in `.gitignore` and will never be committed to GitHub.
+Your password stays on your machine only.
+
+---
+
+## Step 3 — Run the project
+
+Open a terminal inside the project folder and run:
+
+```
+mvn clean compile exec:java
+```
+
+Maven will compile the 4 Java files and run the program.
+
+---
+
+## Step 4 — What you will see
+
+The program runs in 2 parts.
+
+---
+
+### Part 1 — Vulnerable Login (the careless developer)
+
+```
+-----------------------------------------------------------------
+  PART 1 — VULNERABLE LOGIN (unsafe string concatenation)
+-----------------------------------------------------------------
+
+  TEST: Normal login with correct credentials
+  Input username : alice
+  Input password : alice123
+  [SQL SENT] SELECT * FROM users WHERE username = 'alice' AND password = 'alice123'
+  RESULT: LOGIN SUCCESS — Welcome, alice!
+
+  TEST: Normal login with wrong password
+  Input username : alice
+  Input password : wrongpassword
+  [SQL SENT] SELECT * FROM users WHERE username = 'alice' AND password = 'wrongpassword'
+  RESULT: LOGIN FAILED — No matching account found.
+
+  TEST: ATTACK: Bypass login with OR 1=1 injection
+  Input username : ' OR '1'='1'--
+  Input password : anything
+  [SQL SENT] SELECT * FROM users WHERE username = '' OR '1'='1'--' AND password = 'anything'
+  RESULT: LOGIN SUCCESS — Welcome, alice!
+
+  TEST: ATTACK: Bypass password check using SQL comment
+  Input username : admin'--
+  Input password : anything
+  [SQL SENT] SELECT * FROM users WHERE username = 'admin'--' AND password = 'anything'
+  RESULT: LOGIN SUCCESS — Welcome, admin!
+```
+
+**What is happening here:**
+
+- Test 1 and 2 are normal logins. They work correctly.
+- Test 3 is an attack. The attacker typed `' OR '1'='1'--` as the username.
+  The `'1'='1'` condition is always true. The `--` removes the password check.
+  The database returns the first user it finds. Login succeeds without any real credentials.
+- Test 4 is an attack. The attacker typed `admin'--` as the username.
+  The `--` turns the password check into a comment. The database ignores it.
+  Login succeeds without knowing the admin password.
+
+Both attacks succeeded because the developer pasted user input directly into
+the SQL string. The database could not tell the difference between the
+developer's SQL and the attacker's input.
+
+---
+
+### Part 2 — Secure Login (the careful developer)
+
+```
+-----------------------------------------------------------------
+  PART 2 — SECURE LOGIN (PreparedStatement)
+-----------------------------------------------------------------
+
+  TEST: Normal login with correct credentials
+  Input username : alice
+  Input password : alice123
+  [SQL SENT] SELECT * FROM users WHERE username = ? AND password = ?
+  [PARAM 1 - username] alice
+  [PARAM 2 - password] ********
+  RESULT: LOGIN SUCCESS — Welcome, alice!
+
+  TEST: Normal login with wrong password
+  Input username : alice
+  Input password : wrongpassword
+  [SQL SENT] SELECT * FROM users WHERE username = ? AND password = ?
+  [PARAM 1 - username] alice
+  [PARAM 2 - password] ********
+  RESULT: LOGIN FAILED — No matching account found.
+
+  TEST: ATTACK: Bypass login with OR 1=1 injection
+  Input username : ' OR '1'='1'--
+  Input password : anything
+  [SQL SENT] SELECT * FROM users WHERE username = ? AND password = ?
+  [PARAM 1 - username] ' OR '1'='1'--
+  [PARAM 2 - password] ********
+  RESULT: LOGIN FAILED — No matching account found.
+
+  TEST: ATTACK: Bypass password check using SQL comment
+  Input username : admin'--
+  Input password : anything
+  [SQL SENT] SELECT * FROM users WHERE username = ? AND password = ?
+  [PARAM 1 - username] admin'--
+  [PARAM 2 - password] ********
+  RESULT: LOGIN FAILED — No matching account found.
+```
+
+**What is happening here:**
+
+- Test 1 and 2 still work correctly for normal users.
+- Test 3 and 4 are the same attack inputs — but this time both are blocked.
+
+Notice the `[SQL SENT]` line never changes in Part 2:
+```
+SELECT * FROM users WHERE username = ? AND password = ?
+```
+
+The SQL structure is always fixed. The attack input is passed separately as
+plain data. The database searches for a user whose username is literally
+the text `' OR '1'='1'--` — no such user exists — so the login fails.
+
+---
+
+## Why the vulnerable version fails
+
+The vulnerable login builds its SQL like this:
+
+```java
+String query = "SELECT * FROM users WHERE username = '" + username + "'";
+```
+
+The user input is glued directly into the SQL string using the `+` operator.
+The database receives one combined string and cannot tell which part is the
+developer's SQL and which part is the user's input.
+
+---
+
+## Why the secure version works
+
+The secure login uses PreparedStatement:
+
+```java
+String query = "SELECT * FROM users WHERE username = ? AND password = ?";
+pstmt.setString(1, username);
+pstmt.setString(2, password);
+```
+
+The SQL structure is sent to the database first as a fixed template.
+The user input is sent separately as data values only.
+No matter what the user types, it can never change the SQL structure.
+
+---
+
+## Project structure
 
 ```
 NCSA-SQL-Injection/
-├── pom.xml
-├── .gitignore
+├── pom.xml                        <- Maven config and PostgreSQL driver dependency
+├── .gitignore                     <- excludes db.properties and target folder
+├── README.md                      <- this file
 └── src/main/
     ├── resources/
-    │   └── db.properties          <- database connection settings (not committed)
+    │   └── db.properties          <- your local database credentials (not committed)
     └── java/com/ncsa/sqldemo/
-        ├── Main.java              <- entry point, runs all test cases
-        ├── DatabaseSetup.java     <- creates the users table and dummy accounts
+        ├── Main.java              <- runs all test cases against both logins
+        ├── DatabaseSetup.java     <- creates the users table and inserts dummy accounts
         ├── VulnerableLogin.java   <- unsafe login using string concatenation
         └── SecureLogin.java       <- safe login using PreparedStatement
 ```
 
 ---
 
-## Prerequisites
+## Dummy accounts created automatically
 
-- Java 17
-- Apache Maven 3.x
-- PostgreSQL (installed and running locally)
-- VS Code or any terminal
-
----
-
-## Database Setup
-
-1. Open SQL Shell (psql) from the Windows Start menu
-2. Press Enter to accept defaults for Server, Database, Port, and Username
-3. Enter your PostgreSQL password when prompted
-4. Run this command to create the demo database:
-
-```sql
-CREATE DATABASE ncsa_demo;
-```
-
-5. Type `\q` to exit
-
-The application will automatically create the `users` table and insert
-dummy accounts every time it runs. You do not need to create the table manually.
-
----
-
-## Configuration
-
-Open `src/main/resources/db.properties` and set your PostgreSQL connection details:
-
-```
-db.url=jdbc:postgresql://localhost:5432/ncsa_demo
-db.user=postgres
-db.password=<your_local_postgresql_password>
-```
-
-This file is listed in `.gitignore` and will never be committed to version control.
-Credentials are loaded at runtime from this file — they are not hardcoded in any
-Java source file.
-
----
-
-## How to Run
-
-Open a terminal in the project folder and run:
-
-```
-mvn clean compile exec:java
-```
-
-Expected output: the program runs 4 test cases against both the vulnerable
-and secure login and prints the results side by side.
-
----
-
-## Sample Data
-
-The application creates these dummy accounts automatically on every run:
+Every time the program runs, it creates these accounts fresh:
 
 | Username | Role  |
 |----------|-------|
@@ -92,136 +262,14 @@ The application creates these dummy accounts automatically on every run:
 | bob      | user  |
 | admin    | admin |
 
-The passwords used are simple demo values chosen for readability only.
-They are not real credentials and exist only in a local test database.
+Passwords are plain text for readability in this demo only.
+Real applications must hash passwords using BCrypt or Argon2.
 
 ---
 
-## How to Safely Demonstrate the SQL Injection
-
-This demo runs entirely on your local machine against a local test database
-with dummy accounts. No real users, real credentials, or external systems
-are involved.
-
-The two attack inputs used in the demo are:
-
-**Attack 1 — SQL Comment injection**
-
-The attacker enters a crafted username that ends with `'--`.
-The `--` turns everything after it into a SQL comment, removing the password check.
-
-**Attack 2 — OR 1=1 injection**
-
-The attacker enters a crafted username containing `OR '1'='1'--`.
-This adds a condition that is always true, bypassing the login entirely.
-
-Run the program and observe the `[SQL SENT]` output lines to see exactly
-how the query changes when attack input is used.
-
----
-
-## Why the Vulnerable Version Can Be Exploited
-
-The vulnerable login in `VulnerableLogin.java` builds its SQL query like this:
-
-```java
-String query = "SELECT * FROM users WHERE username = '" + username +
-               "' AND password = '" + password + "'";
-```
-
-The user input is pasted directly into the query string. The database
-receives one combined string and cannot tell which part is SQL code written
-by the developer and which part came from the user.
-
-**Example — SQL Comment attack:**
-
-When the attacker enters a crafted username ending with `'--`, the final query becomes:
-
-```
-SELECT * FROM users WHERE username = 'admin'--' AND password = '...'
-```
-
-The `--` is a SQL comment. Everything after it is ignored, including the
-entire password check. The database only checks the username, so the login
-succeeds without a password.
-
-**Example — OR 1=1 attack:**
-
-When the attacker enters a crafted username containing `OR '1'='1'--`, the query becomes:
-
-```
-SELECT * FROM users WHERE username = '' OR '1'='1'--' AND password = '...'
-```
-
-The condition `'1'='1'` is always true. The `--` removes the password check.
-The WHERE clause is always true, so the database returns the first user in
-the table and the login succeeds without any valid credentials.
-
----
-
-## Why the Secure Version Blocks It
-
-The secure login in `SecureLogin.java` uses PreparedStatement:
-
-```java
-String query = "SELECT * FROM users WHERE username = ? AND password = ?";
-PreparedStatement pstmt = conn.prepareStatement(query);
-pstmt.setString(1, username);
-pstmt.setString(2, password);
-```
-
-The SQL structure is sent to the database first as a fixed template with `?`
-placeholders. The database compiles this template before any user input is
-involved. The user input is then passed separately as plain data values.
-
-The database driver automatically escapes any special characters in the input.
-So when the attacker enters a crafted username, the database searches for a user
-whose username is literally that exact string — not SQL code. No such user
-exists, so the login fails.
-
-**The key principle: with PreparedStatement, user input can never change the
-structure or logic of the SQL query.**
-
----
-
-## Main Differences Between the Two Approaches
-
-| Aspect | Vulnerable (Statement) | Secure (PreparedStatement) |
-|---|---|---|
-| Query building | String concatenation with user input | Fixed template with ? placeholders |
-| User input role | Becomes part of SQL code | Treated as data only |
-| SQL injection | Possible | Not possible |
-| Special characters | Interpreted as SQL | Automatically escaped |
-| Code readability | Simple but dangerous | Equally simple and safe |
-
----
-
-## Additional Security Improvements
-
-These are separate from SQL injection prevention but important to mention:
-
-- **Password hashing**: Passwords in this demo are plain text for readability.
-  Real applications must hash passwords using BCrypt or Argon2 before storing them.
-
-- **Input validation**: Reject input that contains unexpected characters before
-  it reaches the database. This is a defence-in-depth measure, not a substitute
-  for PreparedStatement.
-
-- **Least privilege**: The database user the application connects with should
-  only have SELECT and INSERT permissions, not DROP or admin rights.
-
-- **Safe error handling**: Never show raw database error messages to users.
-  Log errors internally and show a generic message to the user.
-
-- **Credentials management**: Connection details are stored in `db.properties`
-  and excluded from version control via `.gitignore`. In production, use
-  environment variables or a secrets manager such as AWS Secrets Manager.
-
----
-
-## Technologies Used
+## Technologies used
 
 - Java 17
 - PostgreSQL
-- JDBC (PostgreSQL driver 42.7.12)
+- JDBC — PostgreSQL driver 42.7.12
 - Apache Maven 3.x
