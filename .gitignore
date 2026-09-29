@@ -1,0 +1,5 @@
+# Ignore compiled output
+target/
+
+# Ignore database credentials — never commit real passwords
+src/main/resources/db.properties
