@@ -1,4 +1,4 @@
-# NCSA SQL Injection Demo
+# SQL Injection Demo
 
 A Java console application that demonstrates how an SQL injection attack happens
 and how it can be prevented using PreparedStatement.
